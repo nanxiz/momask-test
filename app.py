@@ -53,7 +53,7 @@ WEBSITE = """
 <a target="_blank" href="https://ericguo5513.github.io/momask/"> <button type="button" class="btn btn-primary btn-lg"> Webpage </button></a> &ensp;
 <a target="_blank" href="https://ericguo5513.github.io/source_files/momask_2023_bib.txt"> <button type="button" class="btn btn-primary btn-lg"> BibTex </button></a> &ensp;
 <a target="_blank" href="https://huggingface.co/spaces/MeYourHint/MoMask?docker=true" title="Run with docker"> <button type="button" class="btn btn-primary btn-lg"> Docker </button></a> &ensp;
-<a target="_blank" href="https://huggingface.co/spaces/MeYourHint/MoMask?duplicate=true" title="Duplicate space with private gpu and no queue"> <button type="button" class="btn btn-primary btn-lg"> Duplicate </button></a>;
+<a target="_blank" href="https://huggingface.co/spaces/MeYourHint/MoMask?duplicate=true" title="Duplicate space with private gpu and no queue"> <button type="button" class="btn btn-primary btn-lg"> Duplicate </button></a>
 </h3>
 <h3> Description </h3>
 <p>
