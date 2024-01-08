@@ -34,8 +34,7 @@ from gen_t2m import load_vq_model, load_res_model, load_trans_model, load_len_es
 
 clip_version = 'ViT-B/32'
 
-Total_Calls = 7792
-WEBSITE = f"""
+WEBSITE = """
 <div class="embed_hidden">
 <h1 style='text-align: center'> MoMask: Generative Masked Modeling of 3D Human Motions </h1>
 <h2 style='text-align: center'>
@@ -55,7 +54,6 @@ WEBSITE = f"""
 <a target="_blank" href="https://ericguo5513.github.io/source_files/momask_2023_bib.txt"> <button type="button" class="btn btn-primary btn-lg"> BibTex </button></a> &ensp;
 <a target="_blank" href="https://huggingface.co/spaces/MeYourHint/MoMask?docker=true" title="Run with docker"> <button type="button" class="btn btn-primary btn-lg"> Docker </button></a> &ensp;
 <a target="_blank" href="https://huggingface.co/spaces/MeYourHint/MoMask?duplicate=true" title="Duplicate space with private gpu and no queue"> <button type="button" class="btn btn-primary btn-lg"> Duplicate </button></a> &ensp;
-<img src=https://img.shields.io/badge/Visit-{Total_Calls}-green>
 </h3>
 <h3> Description </h3>
 <p>
@@ -65,7 +63,7 @@ WEBSITE = f"""
 🚀🚀🚀 In addition, we provide a link to download the generated human skeletal motion in <b>BVH</b> file format, compatible with CG software such as Blender!!! 🚀🚀🚀
 </p>
 <p>
-😁😁😁 If you find this demo interesting, we would appreciate your star <a href="https://github.com/EricGuo5513/momask-codes" target="_blank"><img alt="GitHub Repo stars" src="https://img.shields.io/github/stars/EricGuo5513/momask-codes"></a>. More details could be found on our <a href='https://ericguo5513.github.io/momask/' target='_blank'>webpage</a>. 🫶🫶🫶
+😁😁😁 If you find this demo interesting, we would appreciate your star on our <a href="https://github.com/EricGuo5513/momask-codes" target="_blank">github repo</a>. More details could be found on our <a href='https://ericguo5513.github.io/momask/' target='_blank'>webpage</a>. 🫶🫶🫶
 </p>
 <p>
 If you have any issues on this space or feature requests, we warmly welcome you to contact us through our <a href="https://github.com/EricGuo5513/momask-codes/issues" target="_blank">github repo</a> or <a href="mailto:ymu3@ualberta.ca?subject =[MoMask]Feedback&body = Message">email</a>.
@@ -73,6 +71,7 @@ If you have any issues on this space or feature requests, we warmly welcome you 
 </div>
 """
 WEBSITE_bottom = """
+<div class="embed_hidden">
 <p>
 We thanks <a href="https://huggingface.co/spaces/Mathux/TMR" target="_blank">TMR</a> for this cool space template.
 </p>
@@ -129,11 +128,12 @@ if not os.path.exists("/data/stats"):
     with open("/data/stats/Prompts.text", 'w') as f:
         pass
 
-def update_total_calls():
-    global Total_Calls
-    Total_Calls_offset = 7792 ## init number from visit, 01/07
-    with open("/data/stats/Prompts.text", 'r') as f:
-        Total_Calls = len(f.readlines()) + Total_Calls_offset
+# Total_Calls = 7792
+# def update_total_calls():
+#     global Total_Calls
+#     Total_Calls_offset = 7792 ## init number from visit, 01/07
+#     with open("/data/stats/Prompts.text", 'r') as f:
+#         Total_Calls = len(f.readlines()) + Total_Calls_offset
 
 ### Load Stats ###
 
@@ -204,7 +204,7 @@ def generate(
     print(text)
     with open("/data/stats/Prompts.text", 'a') as f:
         f.write(text+'\n')
-    update_total_calls()
+    # update_total_calls()
     prompt_list = []
     length_list = []
     est_length = False
