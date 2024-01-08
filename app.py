@@ -34,6 +34,7 @@ from gen_t2m import load_vq_model, load_res_model, load_trans_model, load_len_es
 
 clip_version = 'ViT-B/32'
 
+Total_Calls = 0
 WEBSITE = f"""
 <div class="embed_hidden">
 <h1 style='text-align: center'> MoMask: Generative Masked Modeling of 3D Human Motions </h1>
@@ -129,7 +130,6 @@ if not os.path.exists("/data/stats"):
     with open("/data/stats/Prompts.text", 'w') as f:
         pass
 
-Total_Calls = 0
 def update_total_calls():
     global Total_Calls
     Total_Calls_offset = 4730 ## init number from visit, 01/07
