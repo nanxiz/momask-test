@@ -63,10 +63,10 @@ WEBSITE = """
 🚀🚀🚀 In addition, we provide a link to download the generated human skeletal motion in <b>BVH</b> file format, compatible with CG software such as Blender!!! 🚀🚀🚀
 </p>
 <p>
-😁😁😁 If you find this demo interesting, we would appreciate your star on our <a href="https://github.com/EricGuo5513/momask-codes" target="_blank">github repo</a>. More details could be found on our <a href='https://ericguo5513.github.io/momask/' target='_blank'>webpage</a>. 🫶🫶🫶
+😁😁😁 If you find this demo interesting, kindly star our <a href="https://github.com/EricGuo5513/momask-codes" target="_blank">GitHub repository</a>. More details could be found on our <a href='https://ericguo5513.github.io/momask/' target='_blank'>webpage</a>. 🫶🫶🫶
 </p>
 <p>
-If you have any issues on this space or feature requests, we warmly welcome you to contact us through our <a href="https://github.com/EricGuo5513/momask-codes/issues" target="_blank">github repo</a> or <a href="mailto:ymu3@ualberta.ca?subject =[MoMask]Feedback&body = Message">email</a>.
+If you have any issues on this space or feature requests, we warmly welcome you to contact us through our <a href="https://github.com/EricGuo5513/momask-codes/issues" target="_blank">repository</a> or <a href="mailto:ymu3@ualberta.ca?subject =[MoMask]Feedback&body = Message">email</a>.
 </p>
 </div>
 """
