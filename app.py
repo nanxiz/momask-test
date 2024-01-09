@@ -128,12 +128,13 @@ if not os.path.exists("/data/stats"):
     with open("/data/stats/Prompts.text", 'w') as f:
         pass
 
-# Total_Calls = 7792
-# def update_total_calls():
-#     global Total_Calls
-#     Total_Calls_offset = 7792 ## init number from visit, 01/07
-#     with open("/data/stats/Prompts.text", 'r') as f:
-#         Total_Calls = len(f.readlines()) + Total_Calls_offset
+Total_Calls = 4730
+def update_total_calls():
+    global Total_Calls
+    Total_Calls_offset = 4730 ## init number from visit, 01/07
+    with open("/data/stats/Prompts.text", 'r') as f:
+        Total_Calls = len(f.readlines()) + Total_Calls_offset
+    print("Prompts Num:",Total_Calls)
 
 ### Load Stats ###
 
@@ -204,7 +205,7 @@ def generate(
     print(text)
     with open("/data/stats/Prompts.text", 'a') as f:
         f.write(text+'\n')
-    # update_total_calls()
+    update_total_calls()
     prompt_list = []
     length_list = []
     est_length = False
