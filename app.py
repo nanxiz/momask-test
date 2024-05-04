@@ -391,4 +391,4 @@ with gr.Blocks(css=CSS, theme=theme) as demo:
 
     clear.click(fn=clear_videos, outputs=videos + [text])
 
-demo.launch()
+demo.launch(share = True)
