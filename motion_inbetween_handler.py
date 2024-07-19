@@ -25,6 +25,54 @@ from scipy.spatial.transform import Rotation as R
 from typing import Union
 import runpod
 
+joint_names = [
+    "mixamorig:Hips", "mixamorig:LeftUpLeg", "mixamorig:RightUpLeg", "mixamorig:Spine",
+    "mixamorig:LeftLeg", "mixamorig:RightLeg", "mixamorig:Spine1", "mixamorig:LeftFoot",
+    "mixamorig:RightFoot", "mixamorig:Spine2", "mixamorig:LeftToeBase", "mixamorig:RightToeBase",
+    "mixamorig:Neck", "mixamorig:LeftShoulder", "mixamorig:RightShoulder", "mixamorig:Head",
+    "mixamorig:LeftArm", "mixamorig:RightArm", "mixamorig:LeftForeArm", "mixamorig:RightForeArm",
+    "mixamorig:LeftHand", "mixamorig:RightHand"
+]
+
+# 初始化额外旋转的字典
+def initialize_rotations():
+    additional_rotations = {}
+    additional_rotations["mixamorig:Head"] = R.from_euler('xyz', [-7, 0, 0], degrees=True)
+    additional_rotations["mixamorig:LeftShoulder"] = R.from_euler('xyz', [12.2, -2.2, -1], degrees=True)
+    additional_rotations["mixamorig:RightShoulder"] = R.from_euler('xyz', [10, -63, -15], degrees=True)
+    additional_rotations["mixamorig:LeftArm"] = R.from_euler('xyz', [-2.9, -0.517, -0.534], degrees=True)
+    additional_rotations["mixamorig:RightArm"] = R.from_euler('xyz', [-4.055, -5.536, -4.413], degrees=True)
+    additional_rotations["mixamorig:LeftFoot"] = R.from_euler('xyz', [9, 0, 5], degrees=True)
+    additional_rotations["mixamorig:RightFoot"] = R.from_euler('xyz', [7, 0, -3], degrees=True)
+    additional_rotations["mixamorig:RightUpLeg"] = R.from_euler('xyz', [0, -6, -7], degrees=True)
+    additional_rotations["mixamorig:LeftUpLeg"] = R.from_euler('xyz', [0, 6, 7], degrees=True)
+    additional_rotations["mixamorig:LeftLeg"] = R.from_euler('xyz', [0, -2, -3], degrees=True)
+    additional_rotations["mixamorig:RightLeg"] = R.from_euler('xyz', [0, 2, 3], degrees=True)
+    return additional_rotations
+
+# 应用额外的旋转
+def apply_additional_rotation(joint_name, base_rotation, additional_rotations):
+    if joint_name in additional_rotations:
+        # 四元数乘法
+        #return additional_rotations[joint_name] * base_rotation
+        return  base_rotation * additional_rotations[joint_name] 
+    return base_rotation
+
+# 对所有帧应用额外旋转
+def apply_additional_rotation_to_all_frames_quats(quats, joint_names, additional_rotations):
+    num_frames = quats.shape[0]
+    num_joints = quats.shape[1]
+    rotated_quats = np.empty_like(quats)
+
+    for frame in range(num_frames):
+        for joint in range(num_joints):
+            joint_name = joint_names[joint]
+            base_rotation = R.from_quat(quats[frame, joint])
+            rotated_quats[frame, joint] = apply_additional_rotation(joint_name, base_rotation, additional_rotations).as_quat()
+    return rotated_quats
+
+additional_rotations = initialize_rotations()
+
 INIT_POSITIONS = np.array([[[ 0.000000e+00,  1.850000e+00,  5.960000e-07],
        [-1.632465e-01,  1.762824e+00,  1.966429e-02],
        [ 1.632465e-01,  1.762824e+00,  2.104044e-02],
@@ -95,7 +143,7 @@ opt = parser.parse()
 fixseed(opt.seed)
 
 # Path to source motion
-SOURCE_MOTION = "sample_repeat263StandingMotion0_1.npy"
+SOURCE_MOTION = "doublefinalmotionref263.npy"
 opt.source_motion = SOURCE_MOTION
 
 opt.device = torch.device("cpu" if opt.gpu_id == -1 else "cuda:" + str(opt.gpu_id))
@@ -383,7 +431,7 @@ def inference(event) -> Union[str, dict]:
     text_prompt = input_data.get("text_prompt", "")
     mask_edit_section = input_data.get("mask_edit_section", "")
     init_positions = input_data.get("init_positions", INIT_POSITIONS)
-    init_global_rotations = input_data.get("init_global_positions", INIT_GLOBAL_ROTATIONS)
+    init_global_rotations = input_data.get("init_global_rotations", INIT_GLOBAL_ROTATIONS)
 
     if not text_prompt:
         return {"error": "text_prompt is required."}
@@ -456,8 +504,9 @@ def inference(event) -> Union[str, dict]:
         res_global_rot[:, i] = np.matmul(res_global_rot[:, i], initial_global_rot_matrix[i])
 
     res_global_rot_quats = convert_rotmats_to_quats(res_global_rot)
+    altered_res_global_rot_quats = apply_additional_rotation_to_all_frames_quats(res_global_rot_quats, joint_names, additional_rotations)
 
-    return {"global_quats": res_global_rot_quats.tolist(), "length": n_frame}
+    return {"global_quats": altered_res_global_rot_quats.tolist(), "length": n_frame}
 
 
 
@@ -479,7 +528,7 @@ if __name__ == "__main__":
             "text_prompt": text_prompt,
             "mask_edit_section": mask_edit_section,
             #"init_positions": init_positions,
-            #"init_global_rotations": init_global_rotations
+            #"init_global_positions": init_global_rotations
         }
     }
     result = inference(event)
