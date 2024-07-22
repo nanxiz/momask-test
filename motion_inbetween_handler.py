@@ -3,6 +3,7 @@ from os.path import join as pjoin
 
 import torch
 import torch.nn.functional as F
+from openai import OpenAI
 
 #from models.mask_transformer.transformer import MaskTransformer, ResidualTransformer
 #from models.vq.model import RVQVAE, LengthEstimator
@@ -11,19 +12,142 @@ from options.eval_option import EvalT2MOptions
 from utils.get_opt import get_opt
 
 from utils.fixseed import fixseed
-from visualization.joints2bvh import Joint2BVHConvertor
 
 from utils.motion_process import recover_from_ric
 #from utils.plot_script import plot_3d_motion
 
-from utils.paramUtil import t2m_kinematic_chain
 
 import numpy as np
-from gen_t2m import load_vq_model, load_res_model, load_trans_model
+from models.vq.model import RVQVAE, LengthEstimator
+from models.mask_transformer.transformer import MaskTransformer, ResidualTransformer
 
 from scipy.spatial.transform import Rotation as R
 from typing import Union
 import runpod
+import logging
+import subprocess
+import time
+import requests
+
+clip_version = 'ViT-B/32'
+
+MAX_SERVER_START_WAIT_S = 200
+
+logging.basicConfig(level=logging.INFO)
+
+model_folder_path = "Phi-3-mini-128k-instruct-awq"
+
+def start_vllm_server():
+    if not os.path.exists(model_folder_path):
+        raise FileNotFoundError(f"Model directory not found at {model_folder_path}")
+    
+    process = subprocess.Popen([
+        "python", "-m", "vllm.entrypoints.openai.api_server",
+        "--model", model_folder_path,
+        "--gpu-memory-utilization", "0.9",
+        "--max-model-len", "4095",
+        "--quantization", "awq",
+        "--trust-remote-code"
+    ])
+
+def wait_for_server():
+    start = time.time()
+    while True:
+        try:
+            response = requests.get("http://localhost:8000/health")
+            if response.status_code == 200:
+                logging.info("Server is ready.")
+                break
+        except requests.exceptions.RequestException as err:
+            if time.time() - start > MAX_SERVER_START_WAIT_S:
+                logging.error("Server failed to start in time.", exc_info=True)
+                raise RuntimeError("Server failed to start in time.") from err
+            logging.info("Server is not ready yet. Retrying...")
+            time.sleep(0.5)
+    
+
+start_vllm_server()
+wait_for_server()
+
+openai_api_key = "hihi"
+openai_api_base = "http://localhost:8000/v1"
+
+client = OpenAI(
+    api_key=openai_api_key,
+    base_url=openai_api_base,
+)
+
+def load_vq_model(vq_opt):
+    # opt_path = pjoin(opt.checkpoints_dir, opt.dataset_name, opt.vq_name, 'opt.txt')
+    vq_model = RVQVAE(vq_opt,
+                vq_opt.dim_pose,
+                vq_opt.nb_code,
+                vq_opt.code_dim,
+                vq_opt.output_emb_width,
+                vq_opt.down_t,
+                vq_opt.stride_t,
+                vq_opt.width,
+                vq_opt.depth,
+                vq_opt.dilation_growth_rate,
+                vq_opt.vq_act,
+                vq_opt.vq_norm)
+    ckpt = torch.load(pjoin(vq_opt.checkpoints_dir, vq_opt.dataset_name, vq_opt.name, 'model', 'net_best_fid.tar'),
+                            map_location='cpu')
+    model_key = 'vq_model' if 'vq_model' in ckpt else 'net'
+    vq_model.load_state_dict(ckpt[model_key])
+    print(f'Loading VQ Model {vq_opt.name} Completed!')
+    return vq_model, vq_opt
+
+def load_res_model(res_opt, vq_opt, opt):
+    res_opt.num_quantizers = vq_opt.num_quantizers
+    res_opt.num_tokens = vq_opt.nb_code
+    res_transformer = ResidualTransformer(code_dim=vq_opt.code_dim,
+                                            cond_mode='text',
+                                            latent_dim=res_opt.latent_dim,
+                                            ff_size=res_opt.ff_size,
+                                            num_layers=res_opt.n_layers,
+                                            num_heads=res_opt.n_heads,
+                                            dropout=res_opt.dropout,
+                                            clip_dim=512,
+                                            shared_codebook=vq_opt.shared_codebook,
+                                            cond_drop_prob=res_opt.cond_drop_prob,
+                                            # codebook=vq_model.quantizer.codebooks[0] if opt.fix_token_emb else None,
+                                            share_weight=res_opt.share_weight,
+                                            clip_version=clip_version,
+                                            opt=res_opt)
+
+    ckpt = torch.load(pjoin(res_opt.checkpoints_dir, res_opt.dataset_name, res_opt.name, 'model', 'net_best_fid.tar'),
+                      map_location=opt.device)
+    missing_keys, unexpected_keys = res_transformer.load_state_dict(ckpt['res_transformer'], strict=False)
+    assert len(unexpected_keys) == 0
+    assert all([k.startswith('clip_model.') for k in missing_keys])
+    print(f'Loading Residual Transformer {res_opt.name} from epoch {ckpt["ep"]}!')
+    return res_transformer
+
+
+def load_trans_model(model_opt, opt, which_model):
+    t2m_transformer = MaskTransformer(code_dim=model_opt.code_dim,
+                                      cond_mode='text',
+                                      latent_dim=model_opt.latent_dim,
+                                      ff_size=model_opt.ff_size,
+                                      num_layers=model_opt.n_layers,
+                                      num_heads=model_opt.n_heads,
+                                      dropout=model_opt.dropout,
+                                      clip_dim=512,
+                                      cond_drop_prob=model_opt.cond_drop_prob,
+                                      clip_version=clip_version,
+                                      opt=model_opt)
+    ckpt = torch.load(pjoin(model_opt.checkpoints_dir, model_opt.dataset_name, model_opt.name, 'model', which_model),
+                      map_location='cpu')
+    model_key = 't2m_transformer' if 't2m_transformer' in ckpt else 'trans'
+    # print(ckpt.keys())
+    missing_keys, unexpected_keys = t2m_transformer.load_state_dict(ckpt[model_key], strict=False)
+    assert len(unexpected_keys) == 0
+    assert all([k.startswith('clip_model.') for k in missing_keys])
+    print(f'Loading Transformer {opt.name} from epoch {ckpt["ep"]}!')
+    return t2m_transformer
+
+
 
 joint_names = [
     "mixamorig:Hips", "mixamorig:LeftUpLeg", "mixamorig:RightUpLeg", "mixamorig:Spine",
@@ -37,7 +161,7 @@ joint_names = [
 # 初始化额外旋转的字典
 def initialize_rotations():
     additional_rotations = {}
-    additional_rotations["mixamorig:Head"] = R.from_euler('xyz', [-7, 0, 0], degrees=True)
+    additional_rotations["mixamorig:Head"] = R.from_euler('xyz', [-12, 0, 0], degrees=True)
     additional_rotations["mixamorig:LeftShoulder"] = R.from_euler('xyz', [12.2, -2.2, -1], degrees=True)
     additional_rotations["mixamorig:RightShoulder"] = R.from_euler('xyz', [10, -63, -15], degrees=True)
     additional_rotations["mixamorig:LeftArm"] = R.from_euler('xyz', [-2.9, -0.517, -0.534], degrees=True)
@@ -254,8 +378,6 @@ def joints_pos_inference(text_prompt, mask_edit_section, source_motion = opt.sou
         edit_slice.append([_start, _end])
 
     #sample = 0
-    #kinematic_chain = t2m_kinematic_chain
-    #converter = Joint2BVHConvertor()
 
     with torch.no_grad():
         tokens, features = vq_model.encode(motion)
@@ -426,12 +548,38 @@ def quat_to_rot_matrix_euler(quaternion):
     return rot_matrix, euler_angles
 
 def inference(event) -> Union[str, dict]:
-#def joint_proccessing(text_prompt, mask_edit_section, init_positions = init_positions, init_global_rotations = init_global_rotations):
     input_data = event.get("input", {})
-    text_prompt = input_data.get("text_prompt", "")
+    # text_prompt = input_data.get("text_prompt", "")
     mask_edit_section = input_data.get("mask_edit_section", "")
     init_positions = input_data.get("init_positions", INIT_POSITIONS)
     init_global_rotations = input_data.get("init_global_rotations", INIT_GLOBAL_ROTATIONS)
+    user_text = input_data.get("user", "")
+    bot_text = input_data.get("bot", "")
+
+    if user_text == "":
+        logging.info("Received an empty 'user' input.")
+    if bot_text == "":
+        logging.info("Received an empty 'bot' input.")
+
+    speaker_text = f"Speaker 1: {user_text} Speaker 2: {bot_text}"
+    messages = [
+        {"role": "system", "content": "You will be given a conversation between two speakers. Both speakers are standing. You need to imagine the body motion Speaker 2 (a cute boy) has when he is speaking. You need to describe the body motiion in one sentence using concise language. Note that only body and head movement of Speaker 2 should be included, and not respond with anything related to facial expression. You should just describe the pure movement clearly, don't add anything uncertain. The description should start with 'A person'. Here's an example you could generate: 'A person stands for a few seconds and picks up its arms and shakes them.'. Now, be creative, and here's their conversation:"},
+        {"role": "system", "content":speaker_text}
+
+    ]
+
+
+    extra_body = {
+        "temperature": 0.53,
+        "max_tokens": 128,
+    }
+
+    response = client.chat.completions.create(
+        model=model_folder_path, 
+        messages=messages,
+        extra_body=extra_body
+    )
+    text_prompt = response.choices[0].message.content if response.choices else "A person is standing."
 
     if not text_prompt:
         return {"error": "text_prompt is required."}
@@ -505,17 +653,18 @@ def inference(event) -> Union[str, dict]:
 
     res_global_rot_quats = convert_rotmats_to_quats(res_global_rot)
     altered_res_global_rot_quats = apply_additional_rotation_to_all_frames_quats(res_global_rot_quats, joint_names, additional_rotations)
+    
+    hip_pos = joints_rel[:, 0, :]
 
-    return {"global_quats": altered_res_global_rot_quats.tolist(), "length": n_frame}
-
-
+    return {"text_prompt": text_prompt, "global_quats": altered_res_global_rot_quats.tolist(), "hip_pos": hip_pos.tolist(), "length": n_frame}
 
 runpod.serverless.start({"handler": inference})
     
 '''
 if __name__ == "__main__":
-    text_prompt = "A man is moving his arms while speaking, his body swaying with enthusiasm."
-    mask_edit_section = ["0.2,0.8"]  # 开始时间和结束时间
+    user = "Hey you!"
+    bot = "whats up my friend? why are you here?"
+    mask_edit_section = "0.2,0.8"  # 开始时间和结束时间
     #source_motion = "path_to_source_motion.npy"  # 这里应该指向一个有效的.npy文件
     #use_res_model = True
 
@@ -525,7 +674,8 @@ if __name__ == "__main__":
 
     event = {
         "input": {
-            "text_prompt": text_prompt,
+            "user": user,
+            "bot": bot,
             "mask_edit_section": mask_edit_section,
             #"init_positions": init_positions,
             #"init_global_positions": init_global_rotations
@@ -536,4 +686,4 @@ if __name__ == "__main__":
     
     print(joint.shape)
 
- ''' 
+'''
