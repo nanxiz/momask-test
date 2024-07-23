@@ -28,6 +28,8 @@ import logging
 import subprocess
 import time
 import requests
+from visualization.remove_fs import remove_fs
+
 
 clip_version = 'ViT-B/32'
 
@@ -56,7 +58,7 @@ def start_vllm_server():
     process = subprocess.Popen([
         "python", "-m", "vllm.entrypoints.openai.api_server",
         "--model", model_folder_path,
-        "--gpu-memory-utilization", "0.9",
+        "--gpu-memory-utilization", "0.6",
         "--max-model-len", "4095",
         "--quantization", "awq",
         "--trust-remote-code"
@@ -183,7 +185,7 @@ joint_names = [
 # 初始化额外旋转的字典
 def initialize_rotations():
     additional_rotations = {}
-    additional_rotations["mixamorig:Head"] = R.from_euler('xyz', [-12, 0, 0], degrees=True)
+    additional_rotations["mixamorig:Head"] = R.from_euler('xyz', [-6, 0, 0], degrees=True)
     additional_rotations["mixamorig:LeftShoulder"] = R.from_euler('xyz', [12.2, -2.2, -1], degrees=True)
     additional_rotations["mixamorig:RightShoulder"] = R.from_euler('xyz', [10, -63, -15], degrees=True)
     additional_rotations["mixamorig:LeftArm"] = R.from_euler('xyz', [-2.9, -0.517, -0.534], degrees=True)
@@ -465,28 +467,9 @@ def joints_pos_inference(text_prompt, mask_edit_section, source_motion = opt.sou
 
         difference = soucre_joint[0] - joint[0]
         joint = joint + difference
+        joint = remove_fs(joint, None, fid_l=(3, 4), fid_r=(7, 8), interp_length=5,
+                                  force_on_floor=True)
 
-        #source_data = source_data[:m_length[k]]
-        #soucre_joint = recover_from_ric(torch.from_numpy(source_data).float(), 22).numpy()
-
-        #bvh_path = pjoin(animation_path, "sample%d_len%d_ik.bvh"%(k, m_length[k]))
-        #_, ik_joint = converter.convert(joint, filename=bvh_path, iterations=100)
-
-        #bvh_path = pjoin(animation_path, "sample%d_len%d.bvh" % (k, m_length[k]))
-        #_, joint = converter.convert(joint, filename=bvh_path, iterations=100, foot_ik=False)
-
-
-        #save_path = pjoin(animation_path, "sample%d_len%d.mp4"%(k, m_length[k]))
-        #ik_save_path = pjoin(animation_path, "sample%d_len%d_ik.mp4"%(k, m_length[k]))
-        #source_save_path = pjoin(animation_path, "sample%d_source_len%d.mp4"%(k, m_length[k]))
-
-        #plot_3d_motion(ik_save_path, kinematic_chain, ik_joint, title=print_captions, fps=20)
-        #plot_3d_motion(save_path, kinematic_chain, joint, title=print_captions, fps=20)
-        #plot_3d_motion(source_save_path, kinematic_chain, soucre_joint, title='None', fps=20)
-        #np.save(pjoin(joint_path, "sample%d_len%d.npy"%(k, m_length[k])), joint)
-        #np.save(pjoin(joint_path, "sample%d_len%d_ik.npy"%(k, m_length[k])), ik_joint)
-
-        #ik_joints_json = json.dumps(ik_joint.tolist())
     return joint
 
 def pair_intervals(input_string):
@@ -583,7 +566,7 @@ def quat_to_rot_matrix_euler(quaternion):
 
 def inference(event) -> Union[str, dict]:
     input_data = event.get("input", {})
-    # text_prompt = input_data.get("text_prompt", "")
+    text_prompt = input_data.get("text_prompt", "A person slightly nod its head")
     mask_edit_section = input_data.get("mask_edit_section", "")
     init_positions = input_data.get("init_positions", INIT_POSITIONS)
     init_global_rotations = input_data.get("init_global_rotations", INIT_GLOBAL_ROTATIONS)
@@ -608,12 +591,13 @@ def inference(event) -> Union[str, dict]:
         "max_tokens": 128,
     }
 
-    response = client.chat.completions.create(
-        model=model_folder_path, 
-        messages=messages,
-        extra_body=extra_body
-    )
-    text_prompt = response.choices[0].message.content if response.choices else "A person is standing."
+    if user_text.strip() or bot_text.strip():
+        response = client.chat.completions.create(
+            model=model_folder_path, 
+            messages=messages,
+            extra_body=extra_body
+        )
+        text_prompt = response.choices[0].message.content if response.choices else "A person is standing."
 
     if not text_prompt:
         return {"error": "text_prompt is required."}
