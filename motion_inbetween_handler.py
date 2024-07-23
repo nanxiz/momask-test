@@ -432,6 +432,12 @@ def joints_pos_inference(text_prompt, mask_edit_section, source_motion = opt.sou
         joint_data = joint_data[:m_length[k]]
         joint = recover_from_ric(torch.from_numpy(joint_data).float(), 22).numpy()
 
+        actual_source = np.load("doublefinalmotionrefjoints.npy")
+        soucre_joint = actual_source
+
+        difference = soucre_joint[0] - joint[0]
+        joint = joint + difference
+
         #source_data = source_data[:m_length[k]]
         #soucre_joint = recover_from_ric(torch.from_numpy(source_data).float(), 22).numpy()
 

@@ -32,7 +32,7 @@ class EvalT2MOptions(BaseOptions):
         self.parser.add_argument('-msec', '--mask_edit_section', nargs='*', type=str, help='Indicate sections for editing, use comma to separate the start and end of a section'
                                  'type int will specify the token frame, type float will specify the ratio of seq_len')
         self.parser.add_argument('--text_prompt', default='', type=str, help="A text prompt to be generated. If empty, will take text prompts from dataset.")
-        self.parser.add_argument('--source_motion', default='example_data/000612.npy', type=str, help="Source motion path for editing. (new_joint_vecs format .npy file)")
+        self.parser.add_argument('--source_motion', default='doublefinalmotionref263.npy', type=str, help="Source motion path for editing. (new_joint_vecs format .npy file)")
         self.parser.add_argument("--motion_length", default=0, type=int,
                                  help="Motion length for generation, only applicable with single text prompt.")
         self.is_train = False
