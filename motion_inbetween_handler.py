@@ -37,7 +37,19 @@ logging.basicConfig(level=logging.INFO)
 
 model_folder_path = "Phi-3-mini-128k-instruct-awq"
 
+def is_server_running():
+    try:
+        response = requests.get("http://localhost:8000/health")
+        if response.status_code == 200:
+            return True
+    except requests.exceptions.RequestException:
+        return False
+    return False
+
 def start_vllm_server():
+    if is_server_running():
+        logging.info("Server is already running.")
+        return
     if not os.path.exists(model_folder_path):
         raise FileNotFoundError(f"Model directory not found at {model_folder_path}")
     
@@ -79,29 +91,37 @@ client = OpenAI(
 
 def load_vq_model(vq_opt):
     # opt_path = pjoin(opt.checkpoints_dir, opt.dataset_name, opt.vq_name, 'opt.txt')
-    vq_model = RVQVAE(vq_opt,
-                vq_opt.dim_pose,
-                vq_opt.nb_code,
-                vq_opt.code_dim,
-                vq_opt.output_emb_width,
-                vq_opt.down_t,
-                vq_opt.stride_t,
-                vq_opt.width,
-                vq_opt.depth,
-                vq_opt.dilation_growth_rate,
-                vq_opt.vq_act,
-                vq_opt.vq_norm)
-    ckpt = torch.load(pjoin(vq_opt.checkpoints_dir, vq_opt.dataset_name, vq_opt.name, 'model', 'net_best_fid.tar'),
-                            map_location='cpu')
-    model_key = 'vq_model' if 'vq_model' in ckpt else 'net'
-    vq_model.load_state_dict(ckpt[model_key])
-    print(f'Loading VQ Model {vq_opt.name} Completed!')
+    global vq_model
+    # 检查模型是否已经加载
+    if vq_model is None:
+        vq_model = RVQVAE(vq_opt,
+                          vq_opt.dim_pose,
+                          vq_opt.nb_code,
+                          vq_opt.code_dim,
+                          vq_opt.output_emb_width,
+                          vq_opt.down_t,
+                          vq_opt.stride_t,
+                          vq_opt.width,
+                          vq_opt.depth,
+                          vq_opt.dilation_growth_rate,
+                          vq_opt.vq_act,
+                          vq_opt.vq_norm)
+        ckpt = torch.load(pjoin(vq_opt.checkpoints_dir, vq_opt.dataset_name, vq_opt.name, 'model', 'net_best_fid.tar'),
+                          map_location='cpu')
+        model_key = 'vq_model' if 'vq_model' in ckpt else 'net'
+        vq_model.load_state_dict(ckpt[model_key])
+        print(f'Loading VQ Model {vq_opt.name} Completed!')
     return vq_model, vq_opt
 
+
 def load_res_model(res_opt, vq_opt, opt):
-    res_opt.num_quantizers = vq_opt.num_quantizers
-    res_opt.num_tokens = vq_opt.nb_code
-    res_transformer = ResidualTransformer(code_dim=vq_opt.code_dim,
+    global res_model
+    # 检查模型是否已经加载
+    if res_model is None:
+
+        res_opt.num_quantizers = vq_opt.num_quantizers
+        res_opt.num_tokens = vq_opt.nb_code
+        res_transformer = ResidualTransformer(code_dim=vq_opt.code_dim,
                                             cond_mode='text',
                                             latent_dim=res_opt.latent_dim,
                                             ff_size=res_opt.ff_size,
@@ -116,17 +136,19 @@ def load_res_model(res_opt, vq_opt, opt):
                                             clip_version=clip_version,
                                             opt=res_opt)
 
-    ckpt = torch.load(pjoin(res_opt.checkpoints_dir, res_opt.dataset_name, res_opt.name, 'model', 'net_best_fid.tar'),
+        ckpt = torch.load(pjoin(res_opt.checkpoints_dir, res_opt.dataset_name, res_opt.name, 'model', 'net_best_fid.tar'),
                       map_location=opt.device)
-    missing_keys, unexpected_keys = res_transformer.load_state_dict(ckpt['res_transformer'], strict=False)
-    assert len(unexpected_keys) == 0
-    assert all([k.startswith('clip_model.') for k in missing_keys])
-    print(f'Loading Residual Transformer {res_opt.name} from epoch {ckpt["ep"]}!')
+        missing_keys, unexpected_keys = res_transformer.load_state_dict(ckpt['res_transformer'], strict=False)
+        assert len(unexpected_keys) == 0
+        assert all([k.startswith('clip_model.') for k in missing_keys])
+        print(f'Loading Residual Transformer {res_opt.name} from epoch {ckpt["ep"]}!')
     return res_transformer
 
 
 def load_trans_model(model_opt, opt, which_model):
-    t2m_transformer = MaskTransformer(code_dim=model_opt.code_dim,
+    global t2m_transformer
+    if t2m_transformer is None:
+        t2m_transformer = MaskTransformer(code_dim=model_opt.code_dim,
                                       cond_mode='text',
                                       latent_dim=model_opt.latent_dim,
                                       ff_size=model_opt.ff_size,
@@ -137,14 +159,14 @@ def load_trans_model(model_opt, opt, which_model):
                                       cond_drop_prob=model_opt.cond_drop_prob,
                                       clip_version=clip_version,
                                       opt=model_opt)
-    ckpt = torch.load(pjoin(model_opt.checkpoints_dir, model_opt.dataset_name, model_opt.name, 'model', which_model),
+        ckpt = torch.load(pjoin(model_opt.checkpoints_dir, model_opt.dataset_name, model_opt.name, 'model', which_model),
                       map_location='cpu')
-    model_key = 't2m_transformer' if 't2m_transformer' in ckpt else 'trans'
-    # print(ckpt.keys())
-    missing_keys, unexpected_keys = t2m_transformer.load_state_dict(ckpt[model_key], strict=False)
-    assert len(unexpected_keys) == 0
-    assert all([k.startswith('clip_model.') for k in missing_keys])
-    print(f'Loading Transformer {opt.name} from epoch {ckpt["ep"]}!')
+        model_key = 't2m_transformer' if 't2m_transformer' in ckpt else 'trans'
+        # print(ckpt.keys())
+        missing_keys, unexpected_keys = t2m_transformer.load_state_dict(ckpt[model_key], strict=False)
+        assert len(unexpected_keys) == 0
+        assert all([k.startswith('clip_model.') for k in missing_keys])
+        print(f'Loading Transformer {opt.name} from epoch {ckpt["ep"]}!')
     return t2m_transformer
 
 
@@ -294,6 +316,8 @@ model_opt = get_opt(model_opt_path, device=opt.device)
 vq_opt_path = pjoin(opt.checkpoints_dir, opt.dataset_name, model_opt.vq_name, 'opt.txt')
 vq_opt = get_opt(vq_opt_path, device=opt.device)
 vq_opt.dim_pose = dim_pose
+global vq_model
+vq_model = None
 vq_model, vq_opt = load_vq_model(vq_opt)
 
 model_opt.num_tokens = vq_opt.nb_code
@@ -305,6 +329,8 @@ model_opt.code_dim = vq_opt.code_dim
 #################################
 res_opt_path = pjoin(opt.checkpoints_dir, opt.dataset_name, opt.res_name, 'opt.txt')
 res_opt = get_opt(res_opt_path, device=opt.device)
+global res_model
+res_model = None
 res_model = load_res_model(res_opt, vq_opt, opt)
 
 assert res_opt.vq_name == model_opt.vq_name
@@ -312,6 +338,8 @@ assert res_opt.vq_name == model_opt.vq_name
 #################################
 ######Loading M-Transformer######
 #################################
+global t2m_transformer
+t2m_transformer = None
 t2m_transformer = load_trans_model(model_opt, opt, 'latest.tar')
 
 t2m_transformer.eval()
