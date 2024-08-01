@@ -18,7 +18,7 @@ from utils.motion_process import recover_from_ric
 
 
 import numpy as np
-from models.vq.model import RVQVAE, LengthEstimator
+from models.vq.model import RVQVAE
 from models.mask_transformer.transformer import MaskTransformer, ResidualTransformer
 
 from scipy.spatial.transform import Rotation as R
@@ -29,6 +29,11 @@ import subprocess
 import time
 import requests
 #from visualization.remove_fs import remove_fs
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import Optional
+import uvicorn
+
 
 
 clip_version = 'ViT-B/32'
@@ -79,9 +84,6 @@ def wait_for_server():
             logging.info("Server is not ready yet. Retrying...")
             time.sleep(0.5)
     
-
-start_vllm_server()
-wait_for_server()
 
 openai_api_key = "hihi"
 openai_api_base = "http://localhost:8000/v1"
@@ -524,119 +526,144 @@ def quat_to_rot_matrix_euler(quaternion):
     
     return rot_matrix, euler_angles
 
-def inference(event) -> Union[str, dict]:
-    input_data = event.get("input", {})
-    text_prompt = input_data.get("text_prompt", "A person slightly nod its head")
-    mask_edit_section = input_data.get("mask_edit_section", "")
-    init_positions = input_data.get("init_positions", INIT_POSITIONS)
-    init_global_rotations = input_data.get("init_global_rotations", INIT_GLOBAL_ROTATIONS)
-    user_text = input_data.get("user", "")
-    bot_text = input_data.get("bot", "")
-
-    if user_text == "":
-        logging.info("Received an empty 'user' input.")
-    if bot_text == "":
-        logging.info("Received an empty 'bot' input.")
-
-    speaker_text = f"Speaker 1: {user_text} Speaker 2: {bot_text}"
-    messages = [
-        {"role": "system", "content": "You will be given a conversation between two speakers. Both speakers are standing. You need to imagine the body motion Speaker 2 (a cute boy) has when he is speaking. You need to describe the body motiion in one sentence using concise language. Note that only body and head movement of Speaker 2 should be included, and not respond with anything related to facial expression. You should just describe the pure movement clearly, don't add anything uncertain. The description should start with 'A person'. Here's an example you could generate: 'A person stands for a few seconds and picks up its arms and shakes them.'. Now, be creative, and here's their conversation:"},
-        {"role": "system", "content":speaker_text}
-
-    ]
 
 
-    extra_body = {
-        "temperature": 0.53,
-        "max_tokens": 128,
-    }
+app = FastAPI()
 
-    if user_text.strip() or bot_text.strip():
-        response = client.chat.completions.create(
-            model=model_folder_path, 
-            messages=messages,
-            extra_body=extra_body
-        )
-        text_prompt = response.choices[0].message.content if response.choices else "A person is standing."
+class InferenceInput(BaseModel):
+    user: str = ""
+    bot: str = ""
+    mask_edit_section: str = ""
+    text_prompt: Optional[str] = None  # 新增 text_prompt 字段
 
-    if not text_prompt:
-        return {"error": "text_prompt is required."}
+class RequestModel(BaseModel):
+    input: InferenceInput
 
-    if not mask_edit_section:
-        return {"error": "mask_edit_section is required."}
-    
-    mask_edit_section = pair_intervals(mask_edit_section)
-    
-    motion = joints_pos_inference(text_prompt, mask_edit_section)
-    initial_global_rot_matrix , initial_global_rot_angle = quat_to_rot_matrix_euler(init_global_rotations)
-    
-    positions = motion.copy()  # Example data, replace with your actual data
-    positions[:, :, 0] *= -1
-    #parents = [0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 9, 9, 12, 13, 14, 16, 17, 18, 19]
-    relative_joint_pos = init_positions - init_positions[:, parents]
-    relative_joint_pos[0][0] = init_positions[0][0].copy()
-    flattened_relative_joint_pos = relative_joint_pos.flatten()
-    #naive_hybrik = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0,0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0]
-    #num_nodes = 22
-    #child = [-1, 4, 5, 6, 7, 8, 9, 10, 11, -1, -2, -2, 15, 16, 17, -2, 18, 19, 20, 21, -2, -2]
-    #verified
-    bones = np.reshape(np.array(flattened_relative_joint_pos), [22, 3])[:num_nodes]
+@app.post("/inference")
+async def inference(request: RequestModel) -> Union[str, dict]:
+    try:
+        input_data = request.input
+        user_text = input_data.user
+        bot_text = input_data.bot
+        mask_edit_section = input_data.mask_edit_section
+        text_prompt = input_data.text_prompt
 
-    batch_size = np.shape(positions)[0]
-    joints_rel = positions - positions[:, parents]
-    joints_hybrik = 0.0 * joints_rel
-    pose_global = np.zeros([batch_size, num_nodes, 3, 3])
-    pose = np.zeros([batch_size, num_nodes, 3, 3])
-    n_frame = positions.shape[0]
-    init_root_loc = np.array(init_positions[0][0].copy())
-    default_root_loc = np.tile(init_root_loc, (n_frame, 1))
 
-    for i in range(num_nodes):
-        if i == 0:
-            joints_hybrik[:, 0] = default_root_loc
-        else:
-            joints_hybrik[:, i] = np.matmul(pose_global[:, parents[i]],
-                                        np.reshape(bones[i], [1, 3, 1])).reshape(-1, 3) + joints_hybrik[:, parents[i]]
-        if child[i] == -2:
-            pose[:, i] = pose[:, i] + np.eye(3).reshape(1, 3, 3)
-            pose_global[:, i] = pose_global[:, parents[i]]
-            continue
-        if i == 0:
-            r, rg = multi_child_rot(np.transpose(bones[[1, 2, 3]].reshape(1, 3, 3), [0, 2, 1]),
-                                             np.transpose(joints_rel[:, [1, 2, 3]], [0, 2, 1]),
-                                             np.eye(3).reshape(1, 3, 3))
-
-        elif i == 9:
-            r, rg = multi_child_rot(np.transpose(bones[[12, 13, 14]].reshape(1, 3, 3), [0, 2, 1]),
-                                             np.transpose(joints_rel[:, [12, 13, 14]], [0, 2, 1]),
-                                             pose_global[:, parents[9]])
-        else:
-                
-            p = joints_rel[:, child[i]]
-            if naive_hybrik[i] == 0:
-                p = positions[:, child[i]] - positions[:, i]
-            twi = None
-            r, rg = single_child_rot(bones[child[i]].reshape(1, 3, 1),
-                                              p.reshape(-1, 3, 1),
-                                              pose_global[:, parents[i]],
-                                              twi)
-        pose[:, i] = r
-        pose_global[:, i] = rg
+        #init_positions = input_data.get("init_positions", INIT_POSITIONS)
+        #init_global_rotations = input_data.get("init_global_rotations", INIT_GLOBAL_ROTATIONS)
+        init_positions = INIT_POSITIONS
+        init_global_rotations = INIT_GLOBAL_ROTATIONS
         
-    res_global_rot = pose_global.copy()
-    # apply rotation difference to initial global rotation to get final global rotations
-    # alternative, do this in Unity
-    for i in range(pose_global.shape[1]): 
-        res_global_rot[:, i] = np.matmul(res_global_rot[:, i], initial_global_rot_matrix[i])
+        if user_text == "":
+            logging.info("Received an empty 'user' input.")
+        if bot_text == "":
+            logging.info("Received an empty 'bot' input.")
 
-    res_global_rot_quats = convert_rotmats_to_quats(res_global_rot)
+        speaker_text = f"Speaker 1: {user_text} Speaker 2: {bot_text}"
+        messages = [
+            {"role": "system", "content": "You will be given a conversation between two speakers. Both speakers are standing. You need to imagine the body motion Speaker 2 (a cute boy) has when he is speaking. You need to describe the body motiion in one sentence using concise language. Note that only body and head movement of Speaker 2 should be included, and not respond with anything related to facial expression. You should just describe the pure movement clearly, don't add anything uncertain. The description should start with 'A person'. Here's an example you could generate: 'A person stands for a few seconds and picks up its arms and shakes them.'. Now, be creative, and here's their conversation:"},
+            {"role": "system", "content":speaker_text}
+
+        ]
+
+        extra_body = {
+            "temperature": 0.53,
+            "max_tokens": 128,
+        }
+
+        if user_text.strip() or bot_text.strip():
+            response = client.chat.completions.create(
+                model=model_folder_path, 
+                messages=messages,
+                extra_body=extra_body
+            )
+            text_prompt = response.choices[0].message.content if response.choices else "A person slightly nods."
+
+        if not text_prompt:
+            raise HTTPException(status_code=400, detail="text_prompt is required. If there is no text prompt, you need to provid user bot combo")
+
+        # 检查 mask_edit_section
+        if not mask_edit_section:
+            raise HTTPException(status_code=400, detail="mask_edit_section is required.")
+        
+        mask_edit_section = pair_intervals(mask_edit_section)
+        
+        motion = joints_pos_inference(text_prompt, mask_edit_section)
+        initial_global_rot_matrix , initial_global_rot_angle = quat_to_rot_matrix_euler(init_global_rotations)
+        
+        positions = motion.copy()  # Example data, replace with your actual data
+        positions[:, :, 0] *= -1
+        relative_joint_pos = init_positions - init_positions[:, parents]
+        relative_joint_pos[0][0] = init_positions[0][0].copy()
+        flattened_relative_joint_pos = relative_joint_pos.flatten()
+
+        bones = np.reshape(np.array(flattened_relative_joint_pos), [22, 3])[:num_nodes]
+
+        batch_size = np.shape(positions)[0]
+        joints_rel = positions - positions[:, parents]
+        joints_hybrik = 0.0 * joints_rel
+        pose_global = np.zeros([batch_size, num_nodes, 3, 3])
+        pose = np.zeros([batch_size, num_nodes, 3, 3])
+        n_frame = positions.shape[0]
+        init_root_loc = np.array(init_positions[0][0].copy())
+        default_root_loc = np.tile(init_root_loc, (n_frame, 1))
+
+        for i in range(num_nodes):
+            if i == 0:
+                joints_hybrik[:, 0] = default_root_loc
+            else:
+                joints_hybrik[:, i] = np.matmul(pose_global[:, parents[i]],
+                                            np.reshape(bones[i], [1, 3, 1])).reshape(-1, 3) + joints_hybrik[:, parents[i]]
+            if child[i] == -2:
+                pose[:, i] = pose[:, i] + np.eye(3).reshape(1, 3, 3)
+                pose_global[:, i] = pose_global[:, parents[i]]
+                continue
+            if i == 0:
+                r, rg = multi_child_rot(np.transpose(bones[[1, 2, 3]].reshape(1, 3, 3), [0, 2, 1]),
+                                                np.transpose(joints_rel[:, [1, 2, 3]], [0, 2, 1]),
+                                                np.eye(3).reshape(1, 3, 3))
+
+            elif i == 9:
+                r, rg = multi_child_rot(np.transpose(bones[[12, 13, 14]].reshape(1, 3, 3), [0, 2, 1]),
+                                                np.transpose(joints_rel[:, [12, 13, 14]], [0, 2, 1]),
+                                                pose_global[:, parents[9]])
+            else:
+                    
+                p = joints_rel[:, child[i]]
+                if naive_hybrik[i] == 0:
+                    p = positions[:, child[i]] - positions[:, i]
+                twi = None
+                r, rg = single_child_rot(bones[child[i]].reshape(1, 3, 1),
+                                                p.reshape(-1, 3, 1),
+                                                pose_global[:, parents[i]],
+                                                twi)
+            pose[:, i] = r
+            pose_global[:, i] = rg
+            
+        res_global_rot = pose_global.copy()
+        # apply rotation difference to initial global rotation to get final global rotations
+        # alternative, do this in Unity
+        for i in range(pose_global.shape[1]): 
+            res_global_rot[:, i] = np.matmul(res_global_rot[:, i], initial_global_rot_matrix[i])
+
+        res_global_rot_quats = convert_rotmats_to_quats(res_global_rot)
+        
+        hip_pos = positions[:, 0, :]
+
+        return {"text_prompt": text_prompt, "global_quats": res_global_rot_quats.tolist(), "hip_pos": hip_pos.tolist(), "length": n_frame}
     
-    hip_pos = positions[:, 0, :]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-    return {"text_prompt": text_prompt, "global_quats": res_global_rot_quats.tolist(), "hip_pos": hip_pos.tolist(), "length": n_frame}
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}
 
-runpod.serverless.start({"handler": inference})
-    
+
+if __name__ == "__main__":
+    start_vllm_server()
+    wait_for_server()
+    uvicorn.run(app, host="0.0.0.0", port=8080)
 '''
 if __name__ == "__main__":
     user = "Hey you!"

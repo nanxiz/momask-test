@@ -16,13 +16,14 @@ COPY . /workspace
 RUN pip install openai runpod vllm
 RUN pip install -r requirements.txt
 RUN pip install groq
+RUN pip install fastapi pydantic uvicorn
 
 
 COPY . /workspace
 
-EXPOSE 8000
-COPY motion_inbetween_handler.py /workspace/
+COPY doublefinalmotionrefjoints.npy /workspace/
+COPY api.py /workspace/
+EXPOSE 8080
 
 
-
-CMD ["python", "motion_inbetween_handler.py"]
+CMD ["python", "api.py"]
